@@ -1,51 +1,111 @@
-import pandas as pd
 import sqlite3
+import pandas as pd
 import os
 
-
-BASE_PATH = "data"
-STAGING_JAPAN_DB = os.path.join(BASE_PATH, "Staging/japan_staging_area.db")
-STAGING_MYANMAR_DB = os.path.join(BASE_PATH, "Staging/myanmar_staging_area.db")
-TRANSFORMATION_DB = os.path.join(BASE_PATH, "Transformation/transformation_layer.db")
-
-JPY_TO_USD = 0.0067
-
-
-def transform_items():
+def clean_sqlite_table():
     """
-    Clean and standardize item data from staging databases.
-    Prices are converted to USD and schemas are unified.
+    Read from staging and perform data cleaning.
+    Standardize values across datasets by converting
+    Japan store prices (JPY) to USD.
     """
-conn_japan = sqlite3.connect(STAGING_JAPAN_DB)
-conn_myanmar = sqlite3.connect(STAGING_MYANMAR_DB)
-conn_transform = sqlite3.connect(TRANSFORMATION_DB)
 
-# Japan
-japan = pd.read_sql("SELECT * FROM japan_items", conn_japan)
-japan.dropna(inplace=True)
-japan["price"] = japan["price"].astype(float)
-japan["price_usd"] = japan["price"] * JPY_TO_USD
-japan["country"] = "Japan"
+    BASE_PATH = "data"
 
-japan_clean = japan[["item_id", "item_name", "price_usd", "country"]]
-japan_clean.to_sql("japan_items_clean", conn_transform, if_exists="replace", index=False)
+    # Staging and Transformation databases
+    JAPAN_STAGING_DB = os.path.join(
+        BASE_PATH, "Staging", "japan_staging_area.db"
+    )
+    MYANMAR_STAGING_DB = os.path.join(
+        BASE_PATH, "Staging", "myanmar_staging_area.db"
+    )
+    TRANSFORMATION_DB = os.path.join(
+        BASE_PATH, "Transformation", "transformation_layer.db"
+    )
 
+    # Fixed exchange rate for standardization (exam-safe)
+    JPY_TO_USD = 0.0067  # 1 JPY ≈ 0.0067 USD
 
-# Myanmar
-myanmar = pd.read_sql("SELECT * FROM myanmar_items", conn_myanmar)
-myanmar.dropna(inplace=True)
-myanmar["price"] = myanmar["price"].astype(float)
-myanmar["price_usd"] = myanmar["price"]
-myanmar["country"] = "Myanmar"
+    # ------------------------------
+    # JAPAN STORE CLEANING
+    # ------------------------------
+    conn_japan = sqlite3.connect(JAPAN_STAGING_DB)
+    japan_df = pd.read_sql("SELECT * FROM japan_items", conn_japan)
+    conn_japan.close()
 
-myanmar_clean = myanmar[["item_id", "item_name", "price_usd", "country"]]
-myanmar_clean.to_sql("myanmar_items_clean", conn_transform, if_exists="replace", index=False)
+    # 1. Strip extra whitespace from column names
+    japan_df.columns = japan_df.columns.str.strip()
 
+    # 2. Strip whitespace inside text columns
+    japan_df = japan_df.apply(
+        lambda col: col.str.strip()
+        if col.dtype == "object" else col
+    )
 
-conn_japan.close()
-conn_myanmar.close()
-conn_transform.close()
+    # 3. Replace empty strings with NaN
+    japan_df.replace("", pd.NA, inplace=True)
+
+    # 4. Drop duplicate rows
+    japan_df.drop_duplicates(inplace=True)
+
+    # Convert JPY to USD
+    japan_df["price_usd"] = japan_df["price"] * JPY_TO_USD
+    japan_df.drop(columns=["price"], inplace=True)
+
+    # Add country identifier
+    japan_df["country"] = "Japan"
+
+    # ------------------------------
+    # MYANMAR STORE CLEANING
+    # ------------------------------
+    conn_myanmar = sqlite3.connect(MYANMAR_STAGING_DB)
+    myanmar_df = pd.read_sql("SELECT * FROM myanmar_items", conn_myanmar)
+    conn_myanmar.close()
+
+    # 1. Strip extra whitespace from column names
+    myanmar_df.columns = myanmar_df.columns.str.strip()
+
+    # 2. Strip whitespace inside text columns
+    myanmar_df = myanmar_df.apply(
+        lambda col: col.str.strip()
+        if col.dtype == "object" else col
+    )
+
+    # 3. Replace empty strings with NaN
+    myanmar_df.replace("", pd.NA, inplace=True)
+
+    # 4. Drop duplicate rows
+    myanmar_df.drop_duplicates(inplace=True)
+
+    # Prices already in USD
+    myanmar_df.rename(columns={"price": "price_usd"}, inplace=True)
+
+    # Add country identifier
+    myanmar_df["country"] = "Myanmar"
+
+    # ------------------------------
+    # SAVE CLEANED DATA
+    # ------------------------------
+    trans_conn = sqlite3.connect(TRANSFORMATION_DB)
+
+    japan_df.to_sql(
+        "japan_transformed",
+        trans_conn,
+        if_exists="replace",
+        index=False
+    )
+
+    myanmar_df.to_sql(
+        "myanmar_transformed",
+        trans_conn,
+        if_exists="replace",
+        index=False
+    )
+
+    trans_conn.close()
+
+    print("Transformation complete: Data cleaned and standardized.")
+
 
 # Run transformation
-transform_items()
-print("Transformation complete: Staging → Transformation")
+if __name__ == "__main__":
+    clean_sqlite_table()
