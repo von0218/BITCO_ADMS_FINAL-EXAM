@@ -2,28 +2,57 @@ import pandas as pd
 import sqlite3
 import os
 
-BASE_PATH = "data"
-TRANSFORMATION_DB = os.path.join(BASE_PATH, "Transformation/transformation_layer.db")
-PRESENTATION_DB = os.path.join(BASE_PATH, "Presentation/presentation_layer.db")
-
-
 def load_presentation():
     """
-    Combine transformed datasets into a single presentation table
-    ready for analytics and reporting.
+    This creates the final consolidated “BIG TABLE”.
+    Loads all cleaned Japan + Myanmar tables
+    from the transformation DB into the presentation DB.
     """
-conn_transform = sqlite3.connect(TRANSFORMATION_DB)
-conn_present = sqlite3.connect(PRESENTATION_DB)
 
-japan = pd.read_sql("SELECT * FROM japan_items_clean", conn_transform)
-myanmar = pd.read_sql("SELECT * FROM myanmar_items_clean", conn_transform)
+    BASE_PATH = "data"
 
-final_df = pd.concat([japan, myanmar], ignore_index=True)
-final_df.to_sql("consolidated_store_data", conn_present, if_exists="replace", index=False)
+    # Transformation and Presentation databases
+    TRANSFORMATION_DB = os.path.join(
+        BASE_PATH, "Transformation", "transformation_layer.db"
+    )
+    PRESENTATION_DB = os.path.join(
+        BASE_PATH, "Presentation", "presentation_layer.db"
+    )
 
-conn_transform.close()
-conn_present.close()
+    # Connect to transformation database
+    trans_conn = sqlite3.connect(TRANSFORMATION_DB)
 
-# Run load
-load_presentation()
-print("Load complete: Transformation → Presentation")
+    # Read transformed tables
+    japan_df = pd.read_sql(
+        "SELECT * FROM japan_transformed",
+        trans_conn
+    )
+    myanmar_df = pd.read_sql(
+        "SELECT * FROM myanmar_transformed",
+        trans_conn
+    )
+
+    trans_conn.close()
+
+    # Combine datasets
+    consolidated_df = pd.concat(
+        [japan_df, myanmar_df],
+        ignore_index=True
+    )
+
+    # Load into presentation database
+    pres_conn = sqlite3.connect(PRESENTATION_DB)
+    consolidated_df.to_sql(
+        "consolidated_store_data",
+        pres_conn,
+        if_exists="replace",
+        index=False
+    )
+    pres_conn.close()
+
+    print("Load complete: Consolidated table created in presentation layer.")
+
+
+# Run load step
+if __name__ == "__main__":
+    load_presentation()
